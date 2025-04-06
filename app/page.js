@@ -1,4 +1,3 @@
-import ContentForm from './components/ContentForm';
 import QuizGenerator from './components/QuizGenerator';
 
 export default function Home() {

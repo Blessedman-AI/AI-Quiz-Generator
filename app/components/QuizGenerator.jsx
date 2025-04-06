@@ -1,54 +1,56 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import axios from 'axios';
 import GeneratingModal from './GeneratingModal';
 import QuizDisplay from './QuizDisplay';
+import { extractPdfText } from '@/utils/pdfExtractor';
 
 const QuizGenerator = () => {
   const [numQuestions, setNumQuestions] = useState(3);
-  const [questionType, setQuestionType] = useState('multi-choice');
   const [inputTab, setInputTab] = useState('prompt');
   const [content, setContent] = useState('');
   const [questions, setQuestions] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [error, setError] = useState('');
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizResult, setQuizResult] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
 
-  // const handleFileUpload = async (e) => {
-  //   const file = e.target.files[0];
-  //   if (!file) return;
-
-  //   setIsLoading(true);
-  //   setError('');
-
-  //   try {
-  //     // Create a FormData object to send the file
-  //     const formData = new FormData();
-  //     formData.append('file', file);
-
-  //     // Upload file to get its text content
-  //     const uploadResponse = await axios.post(
-  //       '/api/extract-document',
-  //       formData
-  //     );
-
-  //     // Access the response data as needed
-  //     const { text } = uploadResponse.data.json();
-
-  //     setContent(text); // Store extracted text in content state
-  //   } catch (err) {
-  //     setError(err.message || 'Failed to process document');
-  //   } finally {
-  //     setIsLoading(false);
-  //   }
-  // };
-
-  const handleSubmit = async (e) => {
+  // Drag and drop handlers
+  const handleDragEnter = useCallback((e) => {
     e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
 
-    if (inputTab === 'prompt' && !content.trim()) {
-      setError('Please enter a prompt for your quiz');
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      // Process the dropped file
+      handleFileUpload({ target: { files: [files[0]] } });
+    }
+  }, []);
+
+  const generateQuestions = async (textContent) => {
+    if (!textContent.trim()) {
+      setError('Please enter a prompt or upload a document');
       return;
     }
 
@@ -57,9 +59,8 @@ const QuizGenerator = () => {
 
     try {
       const response = await axios.post('/api/generate-questions', {
-        content,
+        content: textContent,
         numQuestions,
-        questionType,
         source: inputTab,
       });
 
@@ -75,20 +76,6 @@ const QuizGenerator = () => {
         throw new Error('Invalid question format returned from API');
       }
 
-      // For yes-no questions, ensure the options are properly formatted
-      if (questionType === 'yes-no') {
-        parsedQuestions = parsedQuestions.map((question) => {
-          // If options aren't provided for yes-no questions, add them
-          if (!question.options) {
-            return {
-              ...question,
-              options: ['Yes', 'No'],
-            };
-          }
-          return question;
-        });
-      }
-
       setQuestions(parsedQuestions);
       setShowQuiz(true);
     } catch (err) {
@@ -100,6 +87,69 @@ const QuizGenerator = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsExtracting(true);
+    setError('');
+    setFileName(file.name);
+
+    try {
+      let extractedText = '';
+
+      // Handle different file types
+      if (file.type === 'application/pdf') {
+        // Extract text from PDF using PDF.js
+        extractedText = await extractPdfText(file);
+      } else if (file.type.includes('text/')) {
+        // For text files, simply read as text
+        extractedText = await file.text();
+      } else if (
+        file.type.includes(
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ) ||
+        file.type.includes('application/msword') ||
+        file.type.includes('application/vnd.ms-powerpoint') ||
+        file.type.includes(
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        )
+      ) {
+        // For DOCX, DOC, PPT, PPTX - we still need server processing
+        // Create a FormData object to send the file
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Upload file to get its text content
+        const uploadResponse = await axios.post(
+          '/api/extract-document',
+          formData
+        );
+
+        // Access the response data directly
+        extractedText = uploadResponse.data.text;
+      } else {
+        throw new Error('Unsupported file format');
+      }
+
+      setContent(extractedText);
+      // Add this to trigger question generation automatically
+      if (extractedText.trim()) {
+        generateQuestions(extractedText);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to process document');
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    generateQuestions(content);
   };
 
   const handleQuizComplete = (result) => {
@@ -115,6 +165,7 @@ const QuizGenerator = () => {
     setQuestions(null);
     setQuizResult(null);
     setContent('');
+    setFileName('');
   };
 
   return (
@@ -162,7 +213,7 @@ const QuizGenerator = () => {
           {/* Form Section */}
           <div className="w-full mb-6">
             {/* Options Row */}
-            <div className="flex flex-col md:flex-row gap-4 mb-4">
+            <div className="flex flex-col md:flex-row gap-4 mb-4 w-[50%]">
               {/* Input Tab Buttons */}
               <div className="flex-1 flex flex-col justify-end">
                 <div
@@ -208,22 +259,6 @@ const QuizGenerator = () => {
                   className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-0"
                 />
               </div>
-
-              {/* Type of Questions */}
-              <div className="flex-1">
-                <label className="block text-sm font-medium mb-1 text-gray-700">
-                  Type of questions
-                </label>
-                <select
-                  value={questionType}
-                  onChange={(e) => setQuestionType(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-0 bg-white"
-                >
-                  <option value="multi-choice">Multi Choice</option>
-                  <option value="single-choice">Single Choice</option>
-                  <option value="yes-no">Yes or No</option>
-                </select>
-              </div>
             </div>
 
             {/* Input Card */}
@@ -237,43 +272,137 @@ const QuizGenerator = () => {
                    focus:outline-none text-gray-700"
                 />
               ) : (
-                <div className="bg-[#eff2fe] rounded-lg p-8 text-center min-h-[250px]">
-                  {/* File Upload UI */}
-                  <div className="flex flex-col items-center">
-                    <svg
-                      className="w-12 h-12 text-gray-400 mb-3"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                <div>
+                  {fileName ? (
+                    <div className="bg-[#eff2fe] rounded-lg p-8 text-center min-h-[250px]">
+                      <div className="flex flex-col items-center">
+                        <div className="flex items-center justify-center bg-white rounded-lg p-4 mb-4 w-full max-w-md">
+                          <svg
+                            className="w-8 h-8 text-blue-500 mr-3"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                            />
+                          </svg>
+                          <span className="text-gray-700 truncate max-w-xs">
+                            {fileName}
+                          </span>
+                        </div>
+                        <textarea
+                          value={content}
+                          onChange={(e) => setContent(e.target.value)}
+                          className="w-full min-h-[150px] p-3 bg-white border border-gray-200 rounded-md resize-y 
+                           focus:outline-none text-gray-700 mb-4"
+                          placeholder="Extracted content appears here. You can edit if needed."
+                        />
+                        <button
+                          onClick={() => {
+                            setFileName('');
+                            setContent('');
+                          }}
+                          className="text-blue-600 hover:underline"
+                        >
+                          Upload a different file
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* File Upload UI with Drag and Drop */
+                    <div
+                      className={`bg-[#eff2fe] rounded-lg p-8 text-center min-h-[250px] flex flex-col items-center justify-center transition-colors duration-200 ${
+                        isDragging
+                          ? 'bg-blue-100 border-2 border-dashed border-blue-400'
+                          : ''
+                      }`}
+                      onDragEnter={handleDragEnter}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                      <svg
+                        className="w-12 h-12 text-gray-400 mb-3"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                        />
+                      </svg>
+                      <p className="text-lg font-medium mb-2 text-gray-700">
+                        {isDragging
+                          ? 'Drop your file here'
+                          : 'Drop your file here or'}
+                      </p>
+                      <label
+                        htmlFor="file-upload"
+                        className="cursor-pointer bg-blue-600 hover:bg-blue-700 
+                         text-white rounded-md px-4 py-2 transition-colors"
+                      >
+                        Browse Files
+                      </label>
+                      <input
+                        id="file-upload"
+                        type="file"
+                        className="hidden"
+                        onChange={handleFileUpload}
+                        accept=".pdf,.txt,.doc,.docx,.ppt,.pptx"
                       />
-                    </svg>
-                    <p className="text-lg font-medium mb-2 text-gray-700">
-                      Drop your file here or
-                    </p>
-                    <label
-                      htmlFor="file-upload"
-                      className="cursor-pointer bg-blue-600 hover:bg-blue-700 
-                       text-white rounded-md px-4 py-2 transition-colors"
-                    >
-                      Browse Files
-                    </label>
-                    <input
-                      id="file-upload"
-                      type="file"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                    <p className="text-sm text-gray-500 mt-2">
-                      Supported formats: PDF, DOCX, PPT, TXT
-                    </p>
-                  </div>
+                      <p className="text-sm text-gray-500 mt-2">
+                        Supported formats: PDF, DOCX, PPT, TXT
+                      </p>
+
+                      {/* Text extraction visual feedback */}
+                      {isExtracting && (
+                        // <div className="mt-4 w-[30%]">
+                        //   <div className="text-center mb-2 text-sm font-medium text-grey-400">
+                        //     Extracting text from document...
+                        //   </div>
+                        //   <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        //     <div className="bg-green-600 h-2.5 rounded-full animate-pulse w-full"></div>
+                        //   </div>
+                        // </div>
+                        <div className="flex flex-col justify-center items-center mt-4">
+                          <div className="text-center mb-2 text-sm font-medium text-gray-500">
+                            Loading document...
+                          </div>
+                          <div>
+                            <svg
+                              className="animate-spin h-6 w-6 text-blue-600"
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                            >
+                              <circle
+                                className="opacity-25"
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                              ></circle>
+                              <path
+                                className="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                              ></path>
+                            </svg>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -292,7 +421,7 @@ const QuizGenerator = () => {
               disabled={isLoading}
               className="bg-blue-600 hover:bg-blue-700
              text-white font-medium py-2 px-6 rounded-md
-              transition-colors cursor-pointer"
+              transition-colors cursor-pointer disabled:bg-blue-400"
             >
               Generate
             </button>
