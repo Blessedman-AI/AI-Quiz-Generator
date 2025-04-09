@@ -139,16 +139,16 @@ const QuizDisplay = ({ questions, onComplete, onClose }) => {
           </h2>
 
           <div className="space-y-3">
-            {currentQuestion.options.map((option, optionIndex) => {
+            {currentQuestion?.options?.map((option, optionIndex) => {
               const isSelected =
                 currentQuestion.type === 'multi-choice'
                   ? selectedAnswers[currentQuestionIndex]?.includes(option)
                   : selectedAnswers[currentQuestionIndex] === option;
 
               const isCorrect =
-                currentQuestion.type === 'multi-choice'
-                  ? currentQuestion.correctAnswer.includes(option)
-                  : currentQuestion.correctAnswer === option;
+                currentQuestion?.type === 'multi-choice'
+                  ? currentQuestion?.correctAnswer.includes(option)
+                  : currentQuestion?.correctAnswer === option;
 
               let optionClasses =
                 'p-3 border rounded-md cursor-pointer transition-colors flex items-center text-gray-700';

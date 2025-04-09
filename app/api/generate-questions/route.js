@@ -35,6 +35,7 @@ export async function POST(request) {
         },
       ],
       response_format: { type: 'json_object' },
+      temperature: 1.0,
     });
 
     const result = completion.choices[0].message.content;
@@ -53,7 +54,7 @@ function getSystemPrompt(source) {
   if (source === 'document') {
     return 'You are a specialized quiz generation assistant that creates high-quality quiz questions based on the provided document content. Your goal is to test understanding of the material while ensuring questions are clear, relevant, and varied in difficulty.';
   } else {
-    return "You are a specialized quiz generation assistant that creates high-quality quiz questions based on user prompts. You follow the user's instructions regarding topics, difficulty, and style while ensuring questions are educational, engaging, and well-formatted. If however, the user simply pastes a block of text, create a high quality quiz from the text with varying difficulty levels";
+    return "You are a specialized quiz generation assistant that creates high-quality quiz questions based on user prompts. You follow the user's instructions regarding topics, difficulty, and style, if specified, while ensuring questions are educational, engaging, and well-formatted. IMPORTANT: For each request, especially 'random topic' requests, generate DIFFERENT questions on DIFFERENT topics each time. Never repeat the same topic or question patterns across requests. If the user simply pastes a block of text, create a high quality quiz from the text with varying difficulty levels.";
   }
 }
 
@@ -95,10 +96,21 @@ Return all questions in a JSON array.
 `;
   } else {
     // For prompt-based quizzes, we mostly let the user's instructions guide the AI
-    return `
+    let promptText = `
 I need you to create a quiz according to these instructions:
 
-${content}
+${content}`;
+
+    // Special handling for random topic requests
+    if (
+      content.toLowerCase().includes('random topic') ||
+      content.toLowerCase().includes('quiz me')
+    ) {
+      promptText += `
+IMPORTANT: Choose a DIFFERENT random topic than what you've chosen before. Do not pick astronomy, planets, or space unless explicitly requested. Vary between technology, history, science, literature, geography, sports, or other interesting domains. Each request should produce questions from a completely different domain.`;
+    }
+
+    promptText += `
 
 Please generate ${numQuestions} questions, using only single-choice or multi-choice question types.
 
@@ -126,6 +138,7 @@ Example of multi-choice structure:
 
 Important requirements:
 - Follow the user's instructions regarding topics, difficulty level, and style. Where difficulty level is not specified by the user, generate questions varying in difficulty.
+- Do not generate the same questions for the same prompts. Randomise and vary questions as much as possible even if the prompts are similar.
 - Where there are no instructions but content is simply sent, generate a high-quality quiz from it varying in difficulty.
 - Create questions that are clear, educational, and engaging
 - Ensure correct answers are accurate and unambiguous
@@ -136,5 +149,6 @@ Important requirements:
 
 - Return ONLY valid JSON with no additional text
 `;
+    return promptText;
   }
 }

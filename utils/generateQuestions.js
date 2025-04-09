@@ -1,13 +1,20 @@
 import axios from 'axios';
 
-const generateQuestions = async (textContent) => {
+/**
+ * Generates quiz questions based on provided content
+ * @param {string} textContent - The content to generate questions from
+ * @param {number} numQuestions - Number of questions to generate
+ * @param {string} inputTab - Source type ('prompt' or 'document')
+ * @returns {Promise<Array>} - Array of generated questions
+ */
+export const generateQuestions = async (
+  textContent,
+  numQuestions,
+  inputTab
+) => {
   if (!textContent.trim()) {
-    setError('Please enter a prompt or upload a document');
-    return;
+    throw new Error('Please enter a prompt or upload a document');
   }
-
-  setIsLoading(true);
-  setError('');
 
   try {
     const response = await axios.post('/api/generate-questions', {
@@ -28,15 +35,12 @@ const generateQuestions = async (textContent) => {
       throw new Error('Invalid question format returned from API');
     }
 
-    setQuestions(parsedQuestions);
-    setShowQuiz(true);
+    return parsedQuestions;
   } catch (err) {
     const errorMessage =
       err.response?.data?.error ||
       err.message ||
       'Failed to generate questions';
-    setError(errorMessage);
-  } finally {
-    setIsLoading(false);
+    throw new Error(errorMessage);
   }
 };

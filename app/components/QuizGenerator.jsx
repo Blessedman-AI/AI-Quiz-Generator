@@ -1,9 +1,11 @@
 'use client';
+
 import React, { useState, useCallback } from 'react';
-import axios from 'axios';
 import GeneratingModal from './GeneratingModal';
 import QuizDisplay from './QuizDisplay';
-import { extractPdfText } from '@/utils/pdfExtractor';
+import { generateQuestions } from '@/utils/generateQuestions';
+import WordLimitedInput from '@/utils/TextInputWithLimit';
+import DocumentUploadDisplay from './DocumentUploadDisplay';
 
 const QuizGenerator = () => {
   const [numQuestions, setNumQuestions] = useState(3);
@@ -11,44 +13,15 @@ const QuizGenerator = () => {
   const [content, setContent] = useState('');
   const [questions, setQuestions] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isExtracting, setIsExtracting] = useState(false);
   const [error, setError] = useState('');
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizResult, setQuizResult] = useState(null);
   const [fileName, setFileName] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
+  const [wordCount, setWordCount] = useState(0);
+  const [isLimitReached, setIsLimitReached] = useState(false);
+  const wordLimit = 1000;
 
-  // Drag and drop handlers
-  const handleDragEnter = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }, []);
-
-  const handleDragOver = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      // Process the dropped file
-      handleFileUpload({ target: { files: [files[0]] } });
-    }
-  }, []);
-
-  const generateQuestions = async (textContent) => {
+  const handleGenerateQuestions = async (textContent) => {
     if (!textContent.trim()) {
       setError('Please enter a prompt or upload a document');
       return;
@@ -58,98 +31,29 @@ const QuizGenerator = () => {
     setError('');
 
     try {
-      const response = await axios.post('/api/generate-questions', {
-        content: textContent,
+      const parsedQuestions = await generateQuestions(
+        textContent,
         numQuestions,
-        source: inputTab,
-      });
-
-      const result = JSON.parse(response.data.result);
-
-      // Ensure we have the questions array
-      let parsedQuestions = [];
-      if (result.questions) {
-        parsedQuestions = result.questions;
-      } else if (Array.isArray(result)) {
-        parsedQuestions = result;
-      } else {
-        throw new Error('Invalid question format returned from API');
-      }
-
+        inputTab
+      );
       setQuestions(parsedQuestions);
       setShowQuiz(true);
     } catch (err) {
-      const errorMessage =
-        err.response?.data?.error ||
-        err.message ||
-        'Failed to generate questions';
-      setError(errorMessage);
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setIsExtracting(true);
-    setError('');
-    setFileName(file.name);
-
-    try {
-      let extractedText = '';
-
-      // Handle different file types
-      if (file.type === 'application/pdf') {
-        // Extract text from PDF using PDF.js
-        extractedText = await extractPdfText(file);
-      } else if (file.type.includes('text/')) {
-        // For text files, simply read as text
-        extractedText = await file.text();
-      } else if (
-        file.type.includes(
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        ) ||
-        file.type.includes('application/msword') ||
-        file.type.includes('application/vnd.ms-powerpoint') ||
-        file.type.includes(
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-        )
-      ) {
-        // For DOCX, DOC, PPT, PPTX - we still need server processing
-        // Create a FormData object to send the file
-        const formData = new FormData();
-        formData.append('file', file);
-
-        // Upload file to get its text content
-        const uploadResponse = await axios.post(
-          '/api/extract-document',
-          formData
-        );
-
-        // Access the response data directly
-        extractedText = uploadResponse.data.text;
-      } else {
-        throw new Error('Unsupported file format');
-      }
-
-      setContent(extractedText);
-      // Add this to trigger question generation automatically
-      if (extractedText.trim()) {
-        generateQuestions(extractedText);
-      }
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to process document');
-    } finally {
-      setIsExtracting(false);
-    }
+  // Handler for word count updates
+  const handleWordCountChange = (count, limitReached) => {
+    setWordCount(count);
+    setIsLimitReached(limitReached);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    generateQuestions(content);
+    handleGenerateQuestions(content);
   };
 
   const handleQuizComplete = (result) => {
@@ -213,11 +117,14 @@ const QuizGenerator = () => {
           {/* Form Section */}
           <div className="w-full mb-6">
             {/* Options Row */}
-            <div className="flex flex-col md:flex-row gap-4 mb-4 w-[50%]">
+            <div className=" flex  md:flex-row md:justify-between gap-4 mb-4 w-full">
               {/* Input Tab Buttons */}
-              <div className="flex-1 flex flex-col justify-end">
+              <div
+                className="md:flex-1 flex flex-col md:items-end
+                justify-end"
+              >
                 <div
-                  className="grid grid-cols-2 w-full md:w-auto border 
+                  className="grid grid-cols-2 w-full md:w-[70%]  border 
                    border-gray-200 rounded-lg overflow-hidden"
                 >
                   <button
@@ -244,166 +151,55 @@ const QuizGenerator = () => {
               </div>
 
               {/* Number of Questions */}
-              <div className="flex-1">
-                <label className="block text-sm font-medium mb-1 text-gray-700">
-                  Number of questions
-                </label>
-                <input
-                  type="number"
-                  value={numQuestions}
-                  onChange={(e) =>
-                    setNumQuestions(parseInt(e.target.value, 10))
-                  }
-                  min={1}
-                  max={50}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-0"
-                />
+              <div className="flex-1 justify-center ">
+                <div
+                  className="flex mb-1 justify-center items-center md:w-[40%]
+                 w-full "
+                >
+                  <label className="  text-sm font-medium  text-gray-700">
+                    Number of questions
+                  </label>
+                </div>
+                <div className="flex md:w-[40%] justify-center ">
+                  <input
+                    type="number"
+                    value={numQuestions}
+                    onChange={(e) =>
+                      setNumQuestions(parseInt(e.target.value, 10))
+                    }
+                    min={1}
+                    max={50}
+                    className="w-[90%] md:w-[70%] p-2 border border-gray-300
+                   rounded-md focus:outline-none focus:ring-0 text-center"
+                  />
+                </div>
               </div>
             </div>
 
             {/* Input Card */}
             <div className="mt-8">
               {inputTab === 'prompt' ? (
-                <textarea
-                  placeholder="Enter a prompt..."
+                <WordLimitedInput
                   value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  className="w-full min-h-[250px] p-3 bg-[#eff2fe] rounded-md resize-y 
-                   focus:outline-none text-gray-700"
+                  onChange={setContent}
+                  placeholder="Enter a prompt..."
+                  wordLimit={wordLimit}
+                  onWordCountChange={handleWordCountChange}
                 />
               ) : (
-                <div>
-                  {fileName ? (
-                    <div className="bg-[#eff2fe] rounded-lg p-8 text-center min-h-[250px]">
-                      <div className="flex flex-col items-center">
-                        <div className="flex items-center justify-center bg-white rounded-lg p-4 mb-4 w-full max-w-md">
-                          <svg
-                            className="w-8 h-8 text-blue-500 mr-3"
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                            />
-                          </svg>
-                          <span className="text-gray-700 truncate max-w-xs">
-                            {fileName}
-                          </span>
-                        </div>
-                        <textarea
-                          value={content}
-                          onChange={(e) => setContent(e.target.value)}
-                          className="w-full min-h-[150px] p-3 bg-white border border-gray-200 rounded-md resize-y 
-                           focus:outline-none text-gray-700 mb-4"
-                          placeholder="Extracted content appears here. You can edit if needed."
-                        />
-                        <button
-                          onClick={() => {
-                            setFileName('');
-                            setContent('');
-                          }}
-                          className="text-blue-600 hover:underline"
-                        >
-                          Upload a different file
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    /* File Upload UI with Drag and Drop */
-                    <div
-                      className={`bg-[#eff2fe] rounded-lg p-8 text-center min-h-[250px] flex flex-col items-center justify-center transition-colors duration-200 ${
-                        isDragging
-                          ? 'bg-blue-100 border-2 border-dashed border-blue-400'
-                          : ''
-                      }`}
-                      onDragEnter={handleDragEnter}
-                      onDragOver={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onDrop={handleDrop}
-                    >
-                      <svg
-                        className="w-12 h-12 text-gray-400 mb-3"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                        />
-                      </svg>
-                      <p className="text-lg font-medium mb-2 text-gray-700">
-                        {isDragging
-                          ? 'Drop your file here'
-                          : 'Drop your file here or'}
-                      </p>
-                      <label
-                        htmlFor="file-upload"
-                        className="cursor-pointer bg-blue-600 hover:bg-blue-700 
-                         text-white rounded-md px-4 py-2 transition-colors"
-                      >
-                        Browse Files
-                      </label>
-                      <input
-                        id="file-upload"
-                        type="file"
-                        className="hidden"
-                        onChange={handleFileUpload}
-                        accept=".pdf,.txt,.doc,.docx,.ppt,.pptx"
-                      />
-                      <p className="text-sm text-gray-500 mt-2">
-                        Supported formats: PDF, DOCX, PPT, TXT
-                      </p>
-
-                      {/* Text extraction visual feedback */}
-                      {isExtracting && (
-                        // <div className="mt-4 w-[30%]">
-                        //   <div className="text-center mb-2 text-sm font-medium text-grey-400">
-                        //     Extracting text from document...
-                        //   </div>
-                        //   <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        //     <div className="bg-green-600 h-2.5 rounded-full animate-pulse w-full"></div>
-                        //   </div>
-                        // </div>
-                        <div className="flex flex-col justify-center items-center mt-4">
-                          <div className="text-center mb-2 text-sm font-medium text-gray-500">
-                            Loading document...
-                          </div>
-                          <div>
-                            <svg
-                              className="animate-spin h-6 w-6 text-blue-600"
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              ></circle>
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              ></path>
-                            </svg>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <DocumentUploadDisplay
+                  fileName={fileName}
+                  content={content}
+                  onContentChange={setContent}
+                  onFileNameChange={setFileName}
+                  wordLimit={wordLimit}
+                  wordCount={wordCount}
+                  isLimitReached={isLimitReached}
+                  onWordCountChange={handleWordCountChange}
+                  onAutoGenerate={(textContent) =>
+                    handleGenerateQuestions(textContent)
+                  }
+                />
               )}
             </div>
           </div>
@@ -414,17 +210,27 @@ const QuizGenerator = () => {
           )}
 
           {/* Button */}
-          <div className="flex justify-end">
-            <button
-              onClick={handleSubmit}
-              type="submit"
-              disabled={isLoading}
-              className="bg-blue-600 hover:bg-blue-700
+          <div className="flex justify-between">
+            <div className="w-full flex justify-between mb-4">
+              <span
+                className={isLimitReached ? 'text-red-700' : 'text-gray-500'}
+              >
+                {wordCount} / {wordLimit} words
+                {isLimitReached && ' (limit reached)'}
+              </span>
+            </div>
+            <>
+              <button
+                onClick={handleSubmit}
+                type="submit"
+                disabled={isLoading}
+                className="bg-blue-600 hover:bg-blue-700
              text-white font-medium py-2 px-6 rounded-md
               transition-colors cursor-pointer disabled:bg-blue-400"
-            >
-              Generate
-            </button>
+              >
+                Generate
+              </button>
+            </>
           </div>
         </>
       )}

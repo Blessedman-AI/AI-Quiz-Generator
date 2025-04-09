@@ -1,67 +1,63 @@
 // app/api/extract-document/route.js
 import { NextResponse } from 'next/server';
-import formidable from 'formidable';
-import { createReadStream } from 'fs';
-import { Readable } from 'stream';
-import { PdfReader } from 'pdfreader';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import mammoth from 'mammoth';
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-// Parse form data
-const parseForm = async (req) => {
-  const form = formidable();
-
-  return new Promise((resolve, reject) => {
-    form.parse(req, (err, fields, files) => {
-      if (err) reject(err);
-      resolve({ fields, files });
-    });
-  });
-};
-
-// Extract text from PDF
-const extractPdfText = async (filePath) => {
-  return new Promise((resolve, reject) => {
-    let text = '';
-    new PdfReader().parseFileItems(filePath, (err, item) => {
-      if (err) reject(err);
-      else if (!item) resolve(text);
-      else if (item.text) text += item.text + ' ';
-    });
-  });
-};
-
-// Extract text from DOCX
-const extractDocxText = async (filePath) => {
-  const result = await mammoth.extractRawText({ path: filePath });
-  return result.value;
-};
+// When using App Router, we need to explicitly disable bodyParser in a different way
+export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
   try {
-    const { files } = await parseForm(request);
-    const file = files.file[0];
+    // Create a temporary directory to store the uploaded file
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'document-'));
+
+    // Get form data from the request
+    const formData = await request.formData();
+    const file = formData.get('file');
+
+    if (!file) {
+      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+    }
+
+    // Get the file content as buffer
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+
+    // Create a temporary file path
+    const filePath = path.join(tempDir, file.name);
+
+    // Write the file to disk
+    fs.writeFileSync(filePath, fileBuffer);
 
     let text = '';
 
+    // Get mimetype
+    const fileType = file.type;
+
     // Extract text based on file type
-    if (file.mimetype === 'application/pdf') {
-      text = await extractPdfText(file.filepath);
-    } else if (
-      file.mimetype ===
+    if (
+      fileType ===
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      file.mimetype === 'application/msword'
+      fileType === 'application/msword'
     ) {
-      text = await extractDocxText(file.filepath);
+      // For DOCX files
+      const result = await mammoth.extractRawText({ path: filePath });
+      text = result.value;
+    } else if (fileType === 'text/plain') {
+      // For plain text files
+      text = fs.readFileSync(filePath, 'utf8');
     } else {
-      // For other text-based files, read as text
-      const fileContent = await createReadStream(file.filepath).read();
-      text = fileContent.toString();
+      // For other file types - you might want to handle these differently
+      text = fs.readFileSync(filePath, 'utf8');
+    }
+
+    // Clean up the temporary file
+    try {
+      fs.unlinkSync(filePath);
+      fs.rmdirSync(tempDir);
+    } catch (cleanupError) {
+      console.error('Cleanup error:', cleanupError);
     }
 
     return NextResponse.json({ text });
